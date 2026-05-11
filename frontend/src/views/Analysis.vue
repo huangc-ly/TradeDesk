@@ -352,7 +352,7 @@ watch(benchmark, () => {
             <el-descriptions :column="3" size="small" border>
               <el-descriptions-item label="p 值">{{ result.beta_pvalue.toFixed(6) }}</el-descriptions-item>
               <el-descriptions-item label="标准误">{{ result.beta_std_err }}</el-descriptions-item>
-              <el-descriptions-item label="t 值">{{ (result.beta / result.beta_std_err).toFixed(2) }}</el-descriptions-item>
+              <el-descriptions-item label="t 值">{{ result.beta_tvalue }}</el-descriptions-item>
               <el-descriptions-item label="95% CI 下界">{{ result.beta_ci_lower }}</el-descriptions-item>
               <el-descriptions-item label="95% CI 上界">{{ result.beta_ci_upper }}</el-descriptions-item>
               <el-descriptions-item label="H₀">β = 0</el-descriptions-item>
@@ -371,7 +371,7 @@ watch(benchmark, () => {
             <el-descriptions :column="3" size="small" border>
               <el-descriptions-item label="p 值">{{ result.alpha_pvalue.toFixed(6) }}</el-descriptions-item>
               <el-descriptions-item label="标准误">{{ result.alpha_std_err }}</el-descriptions-item>
-              <el-descriptions-item label="t 值">{{ result.alpha_std_err ? (result.alpha / result.alpha_std_err).toFixed(2) : 'N/A' }}</el-descriptions-item>
+              <el-descriptions-item label="t 值">{{ result.alpha_tvalue ?? 'N/A' }}</el-descriptions-item>
               <el-descriptions-item label="95% CI 下界">{{ result.alpha_ci_lower }}</el-descriptions-item>
               <el-descriptions-item label="95% CI 上界">{{ result.alpha_ci_upper }}</el-descriptions-item>
               <el-descriptions-item label="H₀">α = 0</el-descriptions-item>
