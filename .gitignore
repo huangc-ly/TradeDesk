@@ -21,6 +21,7 @@ dist/
 # Parquet data — too large for git, managed separately
 stocks/
 indexes/
+finances/
 
 # Environment
 .env
