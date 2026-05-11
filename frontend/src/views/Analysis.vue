@@ -278,64 +278,104 @@ watch(benchmark, () => {
     </el-card>
 
     <div v-if="result">
-      <el-row :gutter="20" style="margin-bottom: 20px">
-        <el-col :span="5">
+      <!-- Row 1: Point estimates -->
+      <el-row :gutter="16" style="margin-bottom: 16px">
+        <el-col :span="4">
           <el-card shadow="hover">
             <template #header>Beta (β)</template>
-            <div style="font-size: 24px; font-weight: bold; color: #409eff">
-              {{ result.beta }}
-            </div>
-            <div style="font-size: 12px; color: #909399">
+            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.beta }}</div>
+            <div style="font-size: 11px; color: #909399">
               {{ result.beta > 1 ? '波动大于大盘' : result.beta > 0 ? '波动小于大盘' : '与大盘反向' }}
             </div>
           </el-card>
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
           <el-card shadow="hover">
             <template #header>相关性 (r)</template>
-            <div
-              style="font-size: 24px; font-weight: bold"
-              :style="{
-                color: result.correlation > 0.5 ? '#67c23a' : result.correlation > 0 ? '#e6a23c' : '#f56c6c',
-              }"
-            >
+            <div style="font-size: 22px; font-weight: bold"
+              :style="{ color: result.correlation > 0.5 ? '#67c23a' : result.correlation > 0 ? '#e6a23c' : '#f56c6c' }">
               {{ result.correlation }}
             </div>
-            <div style="font-size: 12px; color: #909399">
+            <div style="font-size: 11px; color: #909399">
               {{ result.correlation > 0.7 ? '强相关' : result.correlation > 0.4 ? '中等相关' : '弱相关' }}
             </div>
           </el-card>
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
           <el-card shadow="hover">
-            <template #header>R²</template>
-            <div style="font-size: 24px; font-weight: bold; color: #409eff">
-              {{ result.r_squared }}
+            <template #header>R² / Adj R²</template>
+            <div style="font-size: 22px; font-weight: bold; color: #409eff">
+              {{ result.r_squared }} <span style="font-size: 14px; color: #909399">/ {{ result.adj_r_squared }}</span>
             </div>
-            <div style="font-size: 12px; color: #909399">决定系数</div>
+            <div style="font-size: 11px; color: #909399">决定系数 / 调整后</div>
           </el-card>
         </el-col>
-        <el-col :span="5">
+        <el-col :span="4">
           <el-card shadow="hover">
             <template #header>Alpha (α)</template>
-            <div
-              style="font-size: 24px; font-weight: bold"
-              :style="{ color: result.alpha > 0 ? '#67c23a' : '#f56c6c' }"
-            >
+            <div style="font-size: 22px; font-weight: bold"
+              :style="{ color: result.alpha > 0 ? '#67c23a' : '#f56c6c' }">
               {{ (result.alpha * 100).toFixed(4) }}%
             </div>
-            <div style="font-size: 12px; color: #909399">
-              {{ result.alpha > 0 ? '超额收益为正' : '超额收益为负' }}
+            <div style="font-size: 11px; color: #909399">
+              {{ result.alpha > 0 ? '超额为正' : '超额为负' }}
             </div>
           </el-card>
         </el-col>
         <el-col :span="4">
           <el-card shadow="hover">
             <template #header>样本数</template>
-            <div style="font-size: 24px; font-weight: bold">
-              {{ result.data_points }}
-            </div>
-            <div style="font-size: 12px; color: #909399">个交易日</div>
+            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.data_points }}</div>
+            <div style="font-size: 11px; color: #909399">个交易日</div>
+          </el-card>
+        </el-col>
+        <el-col :span="4">
+          <el-card shadow="hover">
+            <template #header>F 统计量</template>
+            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.f_statistic }}</div>
+            <div style="font-size: 11px; color: #909399">p = {{ result.f_pvalue.toFixed(6) }}</div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <!-- Row 2: Statistical inference -->
+      <el-row :gutter="16" style="margin-bottom: 20px">
+        <el-col :span="12">
+          <el-card shadow="hover">
+            <template #header>
+              β 显著性检验
+              <el-tag v-if="result.beta_pvalue < 0.01" type="success" size="small" style="margin-left: 8px">*** 1% 显著</el-tag>
+              <el-tag v-else-if="result.beta_pvalue < 0.05" type="warning" size="small" style="margin-left: 8px">** 5% 显著</el-tag>
+              <el-tag v-else-if="result.beta_pvalue < 0.1" size="small" style="margin-left: 8px">* 10% 显著</el-tag>
+              <el-tag v-else type="danger" size="small" style="margin-left: 8px">不显著</el-tag>
+            </template>
+            <el-descriptions :column="3" size="small" border>
+              <el-descriptions-item label="p 值">{{ result.beta_pvalue.toFixed(6) }}</el-descriptions-item>
+              <el-descriptions-item label="标准误">{{ result.beta_std_err }}</el-descriptions-item>
+              <el-descriptions-item label="t 值">{{ (result.beta / result.beta_std_err).toFixed(2) }}</el-descriptions-item>
+              <el-descriptions-item label="95% CI 下界">{{ result.beta_ci_lower }}</el-descriptions-item>
+              <el-descriptions-item label="95% CI 上界">{{ result.beta_ci_upper }}</el-descriptions-item>
+              <el-descriptions-item label="H₀">β = 0</el-descriptions-item>
+            </el-descriptions>
+          </el-card>
+        </el-col>
+        <el-col :span="12">
+          <el-card shadow="hover">
+            <template #header>
+              α 显著性检验
+              <el-tag v-if="result.alpha_pvalue < 0.01" type="success" size="small" style="margin-left: 8px">*** 1% 显著</el-tag>
+              <el-tag v-else-if="result.alpha_pvalue < 0.05" type="warning" size="small" style="margin-left: 8px">** 5% 显著</el-tag>
+              <el-tag v-else-if="result.alpha_pvalue < 0.1" size="small" style="margin-left: 8px">* 10% 显著</el-tag>
+              <el-tag v-else type="danger" size="small" style="margin-left: 8px">不显著</el-tag>
+            </template>
+            <el-descriptions :column="3" size="small" border>
+              <el-descriptions-item label="p 值">{{ result.alpha_pvalue.toFixed(6) }}</el-descriptions-item>
+              <el-descriptions-item label="标准误">{{ result.alpha_std_err }}</el-descriptions-item>
+              <el-descriptions-item label="t 值">{{ result.alpha_std_err ? (result.alpha / result.alpha_std_err).toFixed(2) : 'N/A' }}</el-descriptions-item>
+              <el-descriptions-item label="95% CI 下界">{{ result.alpha_ci_lower }}</el-descriptions-item>
+              <el-descriptions-item label="95% CI 上界">{{ result.alpha_ci_upper }}</el-descriptions-item>
+              <el-descriptions-item label="H₀">α = 0</el-descriptions-item>
+            </el-descriptions>
           </el-card>
         </el-col>
       </el-row>

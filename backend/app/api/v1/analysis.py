@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
-from pathlib import Path
 from app.core.database import db
 from app.core.config import settings
+import statsmodels.api as sm
 
 router = APIRouter()
 
@@ -39,21 +39,21 @@ async def correlation_analysis(
 ):
     """
     Calculate return correlation between a stock and a benchmark.
-    Returns beta, alpha, correlation coefficient, R-squared, and the return series.
+    Uses statsmodels OLS for regression — provides p-values, confidence
+    intervals, and standard errors in addition to point estimates.
     """
     if not settings.stock_daily.exists():
         raise HTTPException(status_code=404, detail="Stock data file not found")
 
-    # Find benchmark file
     bench_file = _find_benchmark_file(benchmark)
     if not bench_file:
         raise HTTPException(status_code=404, detail=f"Benchmark {benchmark} not found")
 
-    # Build date filter; if benchmark is a consolidated file, add ts_code filter
     bench_where = ""
     if bench_file.endswith("_daily.parquet"):
         bench_where = f"ts_code = '{benchmark}' AND"
 
+    # DuckDB extracts the return series efficiently from parquet
     query = f"""
     WITH stock_ret AS (
         SELECT trade_date,
@@ -75,47 +75,66 @@ async def correlation_analysis(
         FROM stock_ret s
         JOIN bench_ret b ON s.trade_date = b.trade_date
         WHERE s.ret IS NOT NULL AND b.ret IS NOT NULL
-    ),
-    metrics AS (
-        SELECT
-            regr_slope(stock_return, benchmark_return) AS beta,
-            regr_intercept(stock_return, benchmark_return) AS alpha,
-            corr(stock_return, benchmark_return) AS correlation,
-            regr_r2(stock_return, benchmark_return) AS r_squared,
-            COUNT(*) AS data_points
-        FROM joined
     )
-    SELECT
-        m.beta, m.alpha, m.correlation, m.r_squared, m.data_points,
-        LIST({{trade_date: j.trade_date, stock_return: j.stock_return, benchmark_return: j.benchmark_return}}) AS returns
-    FROM metrics m, joined j
-    GROUP BY m.beta, m.alpha, m.correlation, m.r_squared, m.data_points
+    SELECT trade_date, stock_return, benchmark_return
+    FROM joined
+    ORDER BY trade_date
     """
 
     try:
-        row = db.conn.execute(query).fetchone()
+        df = db.conn.execute(query).fetchdf()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    if row is None or row[4] == 0:
+    if df.empty:
         raise HTTPException(status_code=404, detail="No overlapping trading days found")
+
+    # statsmodels OLS regression for rich statistical inference
+    X = sm.add_constant(df["benchmark_return"])
+    y = df["stock_return"]
+    model = sm.OLS(y, X).fit()
+
+    # Pearson correlation from the same data
+    correlation = float(df["stock_return"].corr(df["benchmark_return"]))
+
+    # Confidence intervals
+    ci = model.conf_int(alpha=0.05)  # 95% CI
+    beta_ci = ci.loc["benchmark_return"]
+    alpha_ci = ci.loc["const"]
+
+    returns = [
+        {
+            "trade_date": str(row["trade_date"]),
+            "stock_return": float(row["stock_return"]),
+            "benchmark_return": float(row["benchmark_return"]),
+        }
+        for _, row in df.iterrows()
+    ]
 
     return {
         "stock": stock,
         "benchmark": benchmark,
         "start_date": start_date,
         "end_date": end_date,
-        "beta": round(row[0], 4) if row[0] is not None else None,
-        "alpha": round(row[1], 6) if row[1] is not None else None,
-        "correlation": round(row[2], 4) if row[2] is not None else None,
-        "r_squared": round(row[3], 4) if row[3] is not None else None,
-        "data_points": row[4],
-        "returns": [
-            {
-                "trade_date": str(r["trade_date"]),
-                "stock_return": r["stock_return"],
-                "benchmark_return": r["benchmark_return"],
-            }
-            for r in (row[5] or [])
-        ],
+        "data_points": int(model.nobs),
+        # Point estimates
+        "beta": round(float(model.params["benchmark_return"]), 4),
+        "alpha": round(float(model.params["const"]), 6),
+        "correlation": round(correlation, 4),
+        "r_squared": round(float(model.rsquared), 4),
+        "adj_r_squared": round(float(model.rsquared_adj), 4),
+        # Statistical inference
+        "beta_std_err": round(float(model.bse["benchmark_return"]), 6),
+        "alpha_std_err": round(float(model.bse["const"]), 6),
+        "beta_pvalue": float(model.pvalues["benchmark_return"]),
+        "alpha_pvalue": float(model.pvalues["const"]),
+        "beta_ci_lower": round(float(beta_ci[0]), 4),
+        "beta_ci_upper": round(float(beta_ci[1]), 4),
+        "alpha_ci_lower": round(float(alpha_ci[0]), 6),
+        "alpha_ci_upper": round(float(alpha_ci[1]), 6),
+        # Residual diagnostics
+        "f_statistic": round(float(model.fvalue), 2),
+        "f_pvalue": float(model.f_pvalue),
+        # Returns series for charting
+        "returns": returns,
     }
