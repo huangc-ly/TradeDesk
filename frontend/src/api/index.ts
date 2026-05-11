@@ -38,6 +38,12 @@ export const portfolioApi = {
 export const analysisApi = {
   getCorrelation: (params: Record<string, any>) =>
     http.get('/v1/analysis/correlation', { params }),
+  getDrawdown: (params: Record<string, any>) =>
+    http.get('/v1/analysis/drawdown', { params }),
+  getSharpe: (params: Record<string, any>) =>
+    http.get('/v1/analysis/sharpe', { params }),
+  getDistribution: (params: Record<string, any>) =>
+    http.get('/v1/analysis/returns-distribution', { params }),
 }
 
 export default http

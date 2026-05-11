@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import * as echarts from 'echarts'
+import { ref, onMounted, computed } from 'vue'
 import { marketApi, analysisApi } from '@/api'
+import CorrelationTab from '@/components/CorrelationTab.vue'
+import DrawdownTab from '@/components/DrawdownTab.vue'
+import SharpeTab from '@/components/SharpeTab.vue'
+import DistributionTab from '@/components/DistributionTab.vue'
 
 interface StockBasic {
   ts_code: string
@@ -9,24 +12,43 @@ interface StockBasic {
   name: string
 }
 
+interface TabState {
+  loading: boolean
+  error: string
+  data: any | null
+}
+
+// --- Pickers data ---
 const stocks = ref<StockBasic[]>([])
 const indexes = ref<string[]>([])
-
 const stockSearch = ref('')
 const benchSearch = ref('')
+
+// --- Shared controls ---
 const stock = ref('000001.SZ')
 const benchmark = ref('000001.SH')
 const dateRange = ref<[string, string]>(['2024-01-01', '2025-12-31'])
 
-const loading = ref(false)
-const result = ref<any>(null)
-const error = ref('')
+// --- Tab management ---
+const activeTab = ref('correlation')
 
-const scatterRef = ref<HTMLDivElement>()
-const cumulativeRef = ref<HTMLDivElement>()
-let scatterChart: echarts.ECharts | null = null
-let cumulativeChart: echarts.ECharts | null = null
+const tabStates = ref<Record<string, TabState>>({
+  correlation:  { loading: false, error: '', data: null },
+  drawdown:     { loading: false, error: '', data: null },
+  sharpe:       { loading: false, error: '', data: null },
+  distribution: { loading: false, error: '', data: null },
+})
 
+const tabComponents: Record<string, any> = {
+  correlation: CorrelationTab,
+  drawdown: DrawdownTab,
+  sharpe: SharpeTab,
+  distribution: DistributionTab,
+}
+
+const activeTabComp = computed(() => tabComponents[activeTab.value])
+
+// --- Stock/index picker filtering ---
 const filteredStocks = computed(() => {
   if (!stockSearch.value) return []
   const kw = stockSearch.value.toLowerCase()
@@ -54,168 +76,64 @@ onMounted(async () => {
   }
 })
 
-function disposeCharts() {
-  if (scatterChart) {
-    scatterChart.dispose()
-    scatterChart = null
-  }
-  if (cumulativeChart) {
-    cumulativeChart.dispose()
-    cumulativeChart = null
-  }
-}
-
-onUnmounted(() => disposeCharts())
-
-async function calculate() {
-  if (!stock.value || !benchmark.value) return
-  loading.value = true
-  error.value = ''
-  // Dispose old charts before clearing result (they reference DOM about to be removed)
-  disposeCharts()
-  result.value = null
-  try {
-    const res = await analysisApi.getCorrelation({
+// --- Endpoint mapping ---
+const ENDPOINTS: Record<string, () => Promise<any>> = {
+  correlation: () =>
+    analysisApi.getCorrelation({
       stock: stock.value,
       benchmark: benchmark.value,
       start_date: dateRange.value[0],
       end_date: dateRange.value[1],
-    })
-    result.value = res
-    // Wait for v-if render + Element Plus card layout
-    await nextTick()
-    await nextTick()
-    renderCharts()
+    }),
+  drawdown: () =>
+    analysisApi.getDrawdown({
+      stock: stock.value,
+      start_date: dateRange.value[0],
+      end_date: dateRange.value[1],
+    }),
+  sharpe: () =>
+    analysisApi.getSharpe({
+      stock: stock.value,
+      start_date: dateRange.value[0],
+      end_date: dateRange.value[1],
+    }),
+  distribution: () =>
+    analysisApi.getDistribution({
+      stock: stock.value,
+      start_date: dateRange.value[0],
+      end_date: dateRange.value[1],
+    }),
+}
+
+async function calculate() {
+  const tab = activeTab.value
+  const state = tabStates.value[tab]
+  state.loading = true
+  state.error = ''
+  state.data = null
+  try {
+    state.data = await ENDPOINTS[tab]()
   } catch (e: any) {
-    error.value = e?.response?.data?.detail ?? e?.message ?? '请求失败'
+    state.error = e?.response?.data?.detail ?? e?.message ?? '请求失败'
   } finally {
-    loading.value = false
+    state.loading = false
   }
 }
 
-function renderCharts() {
-  if (!result.value?.returns?.length) {
-    console.warn('renderCharts: no returns data')
-    return
-  }
-
-  const returns = result.value.returns as any[]
-  const stockRet: number[] = returns.map((r: any) => r.stock_return)
-  const benchRet: number[] = returns.map((r: any) => r.benchmark_return)
-
-  // --- Scatter chart ---
-  const sc = scatterRef.value
-  if (!sc) {
-    console.warn('scatterRef is null')
-    return
-  }
-  // Always create a fresh instance
-  if (scatterChart) scatterChart.dispose()
-  scatterChart = echarts.init(sc)
-
-  const beta = result.value.beta ?? 0
-  const alpha = result.value.alpha ?? 0
-  const xMin = Math.min(...benchRet)
-  const xMax = Math.max(...benchRet)
-
-  scatterChart.setOption({
-    tooltip: {
-      trigger: 'item',
-      formatter: (p: any) =>
-        `个股: ${(p.value[1] * 100).toFixed(2)}%<br/>大盘: ${(p.value[0] * 100).toFixed(2)}%`,
-    },
-    xAxis: {
-      name: '基准收益率',
-      axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' },
-    },
-    yAxis: {
-      name: '个股收益率',
-      axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' },
-    },
-    series: [
-      {
-        type: 'scatter',
-        data: benchRet.map((x: number, i: number) => [x, stockRet[i]]),
-        symbolSize: 5,
-        itemStyle: { color: '#409eff', opacity: 0.4 },
-      },
-      {
-        type: 'line',
-        data: [
-          [xMin, alpha + beta * xMin],
-          [xMax, alpha + beta * xMax],
-        ],
-        lineStyle: { color: '#e6a23c', width: 2, type: 'dashed' },
-        silent: true,
-        symbol: 'none',
-      },
-    ],
-  })
-
-  // --- Cumulative returns chart ---
-  const cu = cumulativeRef.value
-  if (!cu) {
-    console.warn('cumulativeRef is null')
-    return
-  }
-  if (cumulativeChart) cumulativeChart.dispose()
-  cumulativeChart = echarts.init(cu)
-
-  const dates: string[] = []
-  const cumStock: number[] = []
-  const cumBench: number[] = []
-  let cs = 1
-  let cb = 1
-  for (const r of returns) {
-    cs *= 1 + r.stock_return
-    cb *= 1 + r.benchmark_return
-    dates.push(r.trade_date.slice(0, 10)) // "2024-01-03"
-    cumStock.push(+(cs - 1).toFixed(4))
-    cumBench.push(+(cb - 1).toFixed(4))
-  }
-
-  cumulativeChart.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { data: [stock.value, benchmark.value], bottom: 0 },
-    grid: { left: '10%', right: '4%', top: '5%', bottom: '12%' },
-    xAxis: { type: 'category', data: dates },
-    yAxis: {
-      type: 'value',
-      axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' },
-    },
-    series: [
-      {
-        name: stock.value,
-        type: 'line',
-        data: cumStock,
-        lineStyle: { width: 2 },
-        showSymbol: false,
-      },
-      {
-        name: benchmark.value,
-        type: 'line',
-        data: cumBench,
-        lineStyle: { width: 2 },
-        showSymbol: false,
-      },
-    ],
-  })
+function onTabChange(_name: string) {
+  // Switching tabs preserves results — no-op
 }
 
-watch(stock, () => {
-  disposeCharts()
-  result.value = null
-})
-watch(benchmark, () => {
-  disposeCharts()
-  result.value = null
-})
+function clearTabError(tab: string) {
+  tabStates.value[tab].error = ''
+}
 </script>
 
 <template>
   <div>
-    <h2 style="margin-bottom: 20px">相关性分析</h2>
+    <h2 style="margin-bottom: 20px">量化分析</h2>
 
+    <!-- Controls bar -->
     <el-card style="margin-bottom: 20px">
       <el-form :inline="true">
         <el-form-item label="股票">
@@ -237,7 +155,7 @@ watch(benchmark, () => {
           </el-select>
         </el-form-item>
 
-        <el-form-item label="基准">
+        <el-form-item v-if="activeTab === 'correlation'" label="基准">
           <el-select
             v-model="benchmark"
             filterable
@@ -268,134 +186,45 @@ watch(benchmark, () => {
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" @click="calculate" :loading="loading">
-            {{ loading ? '计算中...' : '计算' }}
+          <el-button type="primary" @click="calculate" :loading="tabStates[activeTab].loading">
+            {{ tabStates[activeTab].loading ? '计算中...' : '计算' }}
           </el-button>
         </el-form-item>
       </el-form>
-
-      <el-alert v-if="error" :title="error" type="error" show-icon closable @close="error = ''" />
     </el-card>
 
-    <div v-if="result">
-      <!-- Row 1: Point estimates -->
-      <el-row :gutter="16" style="margin-bottom: 16px">
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>Beta (β)</template>
-            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.beta }}</div>
-            <div style="font-size: 11px; color: #909399">
-              {{ result.beta > 1 ? '波动大于大盘' : result.beta > 0 ? '波动小于大盘' : '与大盘反向' }}
-            </div>
-          </el-card>
-        </el-col>
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>相关性 (r)</template>
-            <div style="font-size: 22px; font-weight: bold"
-              :style="{ color: result.correlation > 0.5 ? '#67c23a' : result.correlation > 0 ? '#e6a23c' : '#f56c6c' }">
-              {{ result.correlation }}
-            </div>
-            <div style="font-size: 11px; color: #909399">
-              {{ result.correlation > 0.7 ? '强相关' : result.correlation > 0.4 ? '中等相关' : '弱相关' }}
-            </div>
-          </el-card>
-        </el-col>
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>R² / Adj R²</template>
-            <div style="font-size: 22px; font-weight: bold; color: #409eff">
-              {{ result.r_squared }} <span style="font-size: 14px; color: #909399">/ {{ result.adj_r_squared }}</span>
-            </div>
-            <div style="font-size: 11px; color: #909399">决定系数 / 调整后</div>
-          </el-card>
-        </el-col>
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>Alpha (α)</template>
-            <div style="font-size: 22px; font-weight: bold"
-              :style="{ color: result.alpha > 0 ? '#67c23a' : '#f56c6c' }">
-              {{ (result.alpha * 100).toFixed(4) }}%
-            </div>
-            <div style="font-size: 11px; color: #909399">
-              {{ result.alpha > 0 ? '超额为正' : '超额为负' }}
-            </div>
-          </el-card>
-        </el-col>
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>样本数</template>
-            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.data_points }}</div>
-            <div style="font-size: 11px; color: #909399">个交易日</div>
-          </el-card>
-        </el-col>
-        <el-col :span="4">
-          <el-card shadow="hover">
-            <template #header>F 统计量</template>
-            <div style="font-size: 22px; font-weight: bold; color: #409eff">{{ result.f_statistic }}</div>
-            <div style="font-size: 11px; color: #909399">p = {{ result.f_pvalue.toFixed(6) }}</div>
-          </el-card>
-        </el-col>
-      </el-row>
+    <!-- Tabs -->
+    <el-tabs v-model="activeTab" @tab-change="onTabChange">
+      <el-tab-pane name="correlation" label="相关性" />
+      <el-tab-pane name="drawdown" label="回撤" />
+      <el-tab-pane name="sharpe" label="夏普" />
+      <el-tab-pane name="distribution" label="分布" />
+    </el-tabs>
 
-      <!-- Row 2: Statistical inference -->
-      <el-row :gutter="16" style="margin-bottom: 20px">
-        <el-col :span="12">
-          <el-card shadow="hover">
-            <template #header>
-              β 显著性检验
-              <el-tag v-if="result.beta_pvalue < 0.01" type="success" size="small" style="margin-left: 8px">*** 1% 显著</el-tag>
-              <el-tag v-else-if="result.beta_pvalue < 0.05" type="warning" size="small" style="margin-left: 8px">** 5% 显著</el-tag>
-              <el-tag v-else-if="result.beta_pvalue < 0.1" size="small" style="margin-left: 8px">* 10% 显著</el-tag>
-              <el-tag v-else type="danger" size="small" style="margin-left: 8px">不显著</el-tag>
-            </template>
-            <el-descriptions :column="3" size="small" border>
-              <el-descriptions-item label="p 值">{{ result.beta_pvalue.toFixed(6) }}</el-descriptions-item>
-              <el-descriptions-item label="标准误">{{ result.beta_std_err }}</el-descriptions-item>
-              <el-descriptions-item label="t 值">{{ result.beta_tvalue }}</el-descriptions-item>
-              <el-descriptions-item label="95% CI 下界">{{ result.beta_ci_lower }}</el-descriptions-item>
-              <el-descriptions-item label="95% CI 上界">{{ result.beta_ci_upper }}</el-descriptions-item>
-              <el-descriptions-item label="H₀">β = 0</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-        </el-col>
-        <el-col :span="12">
-          <el-card shadow="hover">
-            <template #header>
-              α 显著性检验
-              <el-tag v-if="result.alpha_pvalue < 0.01" type="success" size="small" style="margin-left: 8px">*** 1% 显著</el-tag>
-              <el-tag v-else-if="result.alpha_pvalue < 0.05" type="warning" size="small" style="margin-left: 8px">** 5% 显著</el-tag>
-              <el-tag v-else-if="result.alpha_pvalue < 0.1" size="small" style="margin-left: 8px">* 10% 显著</el-tag>
-              <el-tag v-else type="danger" size="small" style="margin-left: 8px">不显著</el-tag>
-            </template>
-            <el-descriptions :column="3" size="small" border>
-              <el-descriptions-item label="p 值">{{ result.alpha_pvalue.toFixed(6) }}</el-descriptions-item>
-              <el-descriptions-item label="标准误">{{ result.alpha_std_err }}</el-descriptions-item>
-              <el-descriptions-item label="t 值">{{ result.alpha_tvalue ?? 'N/A' }}</el-descriptions-item>
-              <el-descriptions-item label="95% CI 下界">{{ result.alpha_ci_lower }}</el-descriptions-item>
-              <el-descriptions-item label="95% CI 上界">{{ result.alpha_ci_upper }}</el-descriptions-item>
-              <el-descriptions-item label="H₀">α = 0</el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-        </el-col>
-      </el-row>
+    <!-- Per-tab error display -->
+    <el-alert
+      v-if="tabStates[activeTab].error"
+      :title="tabStates[activeTab].error"
+      type="error"
+      show-icon
+      closable
+      style="margin-bottom: 16px"
+      @close="clearTabError(activeTab)"
+    />
 
-      <el-row :gutter="20">
-        <el-col :span="12">
-          <el-card>
-            <template #header>收益率散点图</template>
-            <div ref="scatterRef" style="width: 100%; height: 420px" />
-          </el-card>
-        </el-col>
-        <el-col :span="12">
-          <el-card>
-            <template #header>累计收益对比</template>
-            <div ref="cumulativeRef" style="width: 100%; height: 420px" />
-          </el-card>
-        </el-col>
-      </el-row>
-    </div>
+    <!-- Dynamic tab component -->
+    <component
+      :is="activeTabComp"
+      v-if="tabStates[activeTab].data"
+      :result="tabStates[activeTab].data"
+      :stock-name="stock"
+      :benchmark-name="benchmark"
+    />
 
-    <el-empty v-else description="选择股票和基准指数，点击「计算」开始分析" />
+    <!-- Empty state -->
+    <el-empty
+      v-if="!tabStates[activeTab].data && !tabStates[activeTab].loading"
+      description="选择股票和参数，点击「计算」开始分析"
+    />
   </div>
 </template>
