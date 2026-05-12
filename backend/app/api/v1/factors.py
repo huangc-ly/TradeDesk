@@ -22,6 +22,7 @@ from collections.abc import Callable
 router = APIRouter()
 
 STOCK_DAILY = str(settings.stock_daily).replace("\\", "/")
+STOCK_BASIC = str(settings.stock_basic).replace("\\", "/")
 
 
 # ---------------------------------------------------------------------------
@@ -270,20 +271,50 @@ def _load_data_for_callback(factor_def: dict, date_: str) -> pd.DataFrame:
     return db.conn.execute(query).fetchdf()
 
 
+def _resolve_names(codes: list[str]) -> dict[str, str]:
+    """Batch lookup stock names from stock_basic_data.parquet."""
+    if not codes:
+        return {}
+    csv_codes = ", ".join(f"'{c}'" for c in codes)
+    q = (
+        f"SELECT ts_code, name FROM read_parquet('{STOCK_BASIC}') "
+        f"WHERE ts_code IN ({csv_codes})"
+    )
+    rows = db.conn.execute(q).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def _attach_names(records: list[dict], name_map: dict[str, str]) -> list[dict]:
+    """Add 'name' field to each record."""
+    for rec in records:
+        rec["name"] = name_map.get(rec["ts_code"], "")
+    return records
+
+
 def _build_response(
     df: pd.DataFrame, factor_id: str, factor_def: dict, date_: str
 ) -> dict:
     """Shared response builder for all factor types."""
     values = df["value"].to_numpy(dtype=float)
     stats = _compute_stats(values)
+
+    top10 = df.nlargest(10, "value")[["ts_code", "value"]].to_dict(orient="records")
+    bottom10 = df.nsmallest(10, "value")[["ts_code", "value"]].to_dict(orient="records")
+
+    # Resolve names for top/bottom 10
+    codes = {r["ts_code"] for r in top10} | {r["ts_code"] for r in bottom10}
+    name_map = _resolve_names(list(codes))
+    _attach_names(top10, name_map)
+    _attach_names(bottom10, name_map)
+
     return {
         "factor_id": factor_id,
         "factor_name": factor_def["name"],
         "date": date_,
         "category": factor_def["category"],
         "stats": stats,
-        "top_10": df.nlargest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
-        "bottom_10": df.nsmallest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
+        "top_10": top10,
+        "bottom_10": bottom10,
         "all_values": [
             {"ts_code": row["ts_code"], "value": round(float(row["value"]), 6)}
             for _, row in df.iterrows()

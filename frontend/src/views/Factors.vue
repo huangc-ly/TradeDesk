@@ -268,7 +268,8 @@ function renderHistogram() {
             <template #header>Top 10</template>
             <el-table :data="result.top_10" size="small" max-height="400">
               <el-table-column type="index" label="#" width="50" />
-              <el-table-column prop="ts_code" label="代码" width="120" />
+              <el-table-column prop="ts_code" label="代码" width="110" />
+              <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip />
               <el-table-column prop="value" label="因子值" sortable />
             </el-table>
           </el-card>
@@ -278,7 +279,8 @@ function renderHistogram() {
             <template #header>Bottom 10</template>
             <el-table :data="result.bottom_10" size="small" max-height="400">
               <el-table-column type="index" label="#" width="50" />
-              <el-table-column prop="ts_code" label="代码" width="120" />
+              <el-table-column prop="ts_code" label="代码" width="110" />
+              <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip />
               <el-table-column prop="value" label="因子值" sortable />
             </el-table>
           </el-card>
