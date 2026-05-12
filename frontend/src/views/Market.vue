@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { marketApi } from '@/api'
 import KLineChart from '@/components/KLineChart.vue'
 
@@ -9,25 +9,60 @@ interface StockBasic {
   name: string
   area: string
   industry: string
-  market: string
+}
+
+interface TreeNode {
+  id: string
+  label: string
+  isLeaf?: boolean
+  children?: TreeNode[]
 }
 
 const stocks = ref<StockBasic[]>([])
 const selectedCode = ref('')
-const searchText = ref('')
+const selectedName = ref('')
+const filterText = ref('')
+const treeRef = ref()
 
-// Only render options matching search (empty = show nothing)
-const filteredStocks = computed(() => {
-  if (!searchText.value) return []
-  const kw = searchText.value.toLowerCase()
-  return stocks.value
-    .filter(
-      (s) =>
-        s.ts_code.toLowerCase().includes(kw) ||
-        s.name.toLowerCase().includes(kw) ||
-        s.symbol.includes(kw)
-    )
-    .slice(0, 50) // limit visible options to 50
+const treeData = computed(() => {
+  const groups: Record<string, StockBasic[]> = {}
+  for (const s of stocks.value) {
+    const key = s.industry || '未分类'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(s)
+  }
+
+  const sortedGroups = Object.entries(groups).sort((a, b) =>
+    a[0].localeCompare(b[0], 'zh'),
+  )
+
+  return sortedGroups.map(([industry, groupStocks]) => ({
+    id: `ind_${industry}`,
+    label: `${industry}  (${groupStocks.length})`,
+    children: groupStocks
+      .sort((a, b) => a.ts_code.localeCompare(b.ts_code))
+      .map((s) => ({
+        id: s.ts_code,
+        label: `${s.name}  ${s.ts_code}`,
+        isLeaf: true,
+      })),
+  }))
+})
+
+function filterNode(value: string, data: TreeNode) {
+  if (!value) return true
+  return data.label.toLowerCase().includes(value.toLowerCase())
+}
+
+function onNodeClick(data: TreeNode) {
+  if (data.isLeaf) {
+    selectedCode.value = data.id
+    selectedName.value = data.label
+  }
+}
+
+watch(filterText, (val) => {
+  treeRef.value?.filter(val)
 })
 
 onMounted(async () => {
@@ -38,44 +73,80 @@ onMounted(async () => {
     console.error('Failed to load stocks:', e)
   }
 })
-
-function onSelect(code: string) {
-  selectedCode.value = code
-}
 </script>
 
 <template>
   <div>
     <h2 style="margin-bottom: 20px">行情</h2>
 
-    <el-card>
-      <el-select
-        v-model="selectedCode"
-        filterable
-        remote
-        :remote-method="(q: string) => (searchText = q)"
-        placeholder="输入代码或名称搜索（如 000001 或 平安）"
-        style="width: 400px; margin-bottom: 20px"
-        clearable
-        @change="onSelect"
-      >
-        <el-option
-          v-for="s in filteredStocks"
-          :key="s.ts_code"
-          :label="`${s.ts_code}  ${s.name}`"
-          :value="s.ts_code"
+    <div class="market-layout">
+      <!-- Left: stock tree -->
+      <div class="tree-panel">
+        <el-input
+          v-model="filterText"
+          placeholder="搜索股票名称或代码"
+          clearable
+          style="margin-bottom: 12px"
+        />
+        <el-tree
+          ref="treeRef"
+          :data="treeData"
+          :filter-node-method="filterNode"
+          node-key="id"
+          default-expand-all
+          highlight-current
+          @node-click="onNodeClick"
         >
-          <span style="float: left; font-weight: 500">{{ s.ts_code }}</span>
-          <span style="float: right; color: #8492a6; font-size: 13px">{{ s.name }}</span>
-        </el-option>
-      </el-select>
+          <template #default="{ data }">
+            <span class="tree-node" :class="{ leaf: data.isLeaf }">
+              {{ data.label }}
+            </span>
+          </template>
+        </el-tree>
+      </div>
 
-      <KLineChart
-        v-if="selectedCode"
-        :key="selectedCode"
-        :code="selectedCode"
-      />
-      <el-empty v-else description="请搜索并选择股票查看行情" />
-    </el-card>
+      <!-- Right: chart -->
+      <div class="chart-panel">
+        <el-card v-if="selectedCode">
+          <template #header>
+            <span style="font-weight: 600">{{ selectedName }}</span>
+          </template>
+          <KLineChart :key="selectedCode" :code="selectedCode" />
+        </el-card>
+        <el-empty v-else description="点击左侧股票查看行情" />
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.market-layout {
+  display: flex;
+  gap: 16px;
+  height: calc(100vh - 160px);
+}
+
+.tree-panel {
+  width: 300px;
+  min-width: 300px;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 4px;
+  padding: 12px;
+  border: 1px solid #ebeef5;
+}
+
+.chart-panel {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tree-node {
+  font-size: 13px;
+}
+
+.tree-node.leaf {
+  font-size: 13px;
+  cursor: pointer;
+}
+</style>

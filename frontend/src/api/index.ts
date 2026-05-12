@@ -46,6 +46,20 @@ export const analysisApi = {
     http.get('/v1/analysis/returns-distribution', { params }),
 }
 
+// Finance APIs
+export const financeApi = {
+  getBalanceSheet: (params: Record<string, any>) =>
+    http.get('/v1/finance/statements/balance', { params }),
+  getIncomeStatement: (params: Record<string, any>) =>
+    http.get('/v1/finance/statements/income', { params }),
+  getCashFlow: (params: Record<string, any>) =>
+    http.get('/v1/finance/statements/cashflow', { params }),
+  getIndicators: (code: string, periods?: number) =>
+    http.get(`/v1/finance/indicators/${code}`, { params: periods ? { periods } : {} }),
+  getForecast: (code: string) =>
+    http.get(`/v1/finance/forecast/${code}`),
+}
+
 // Factors APIs
 export const factorsApi = {
   listFactors: (category?: string) =>

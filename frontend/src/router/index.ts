@@ -34,10 +34,22 @@ const router = createRouter({
           meta: { title: '组合' },
         },
         {
+          path: 'finance',
+          name: 'Finance',
+          component: () => import('@/views/Finance.vue'),
+          meta: { title: '财报' },
+        },
+        {
           path: 'analysis',
           name: 'Analysis',
           component: () => import('@/views/Analysis.vue'),
           meta: { title: '分析' },
+        },
+        {
+          path: 'stocks',
+          name: 'Stocks',
+          component: () => import('@/views/Stocks.vue'),
+          meta: { title: '股票列表' },
         },
         {
           path: 'factors',

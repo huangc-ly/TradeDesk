@@ -4,6 +4,7 @@ from .v1.strategy import router as strategy_router
 from .v1.portfolio import router as portfolio_router
 from .v1.analysis import router as analysis_router
 from .v1.factors import router as factors_router
+from .v1.finance import router as finance_router
 
 api_router = APIRouter()
 
@@ -12,3 +13,4 @@ api_router.include_router(strategy_router, prefix="/v1/strategy", tags=["strateg
 api_router.include_router(portfolio_router, prefix="/v1/portfolio", tags=["portfolio"])
 api_router.include_router(analysis_router, prefix="/v1/analysis", tags=["analysis"])
 api_router.include_router(factors_router, prefix="/v1/factors", tags=["factors"])
+api_router.include_router(finance_router, prefix="/v1/finance", tags=["finance"])

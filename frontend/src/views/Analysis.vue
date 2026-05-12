@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { marketApi, analysisApi } from '@/api'
 import CorrelationTab from '@/components/CorrelationTab.vue'
 import DrawdownTab from '@/components/DrawdownTab.vue'
 import SharpeTab from '@/components/SharpeTab.vue'
 import DistributionTab from '@/components/DistributionTab.vue'
+
+const route = useRoute()
 
 interface StockBasic {
   ts_code: string
@@ -71,6 +74,19 @@ onMounted(async () => {
     ])
     stocks.value = (sRes as any).stocks ?? []
     indexes.value = (iRes as any).indexes ?? []
+
+    // Pre-select stock if navigated from stock list
+    const queryStock = route.query.stock as string | undefined
+    if (queryStock) {
+      const found = stocks.value.find(
+        (s) => s.ts_code === queryStock,
+      )
+      if (found) {
+        stockSearch.value = found.ts_code
+        stock.value = found.ts_code
+        calculate()
+      }
+    }
   } catch (e) {
     console.error('Failed to load pickers:', e)
   }

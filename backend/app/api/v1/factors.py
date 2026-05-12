@@ -354,6 +354,9 @@ async def list_factors(category: str | None = Query(None, description="Filter by
     for fid, fd in FACTOR_REGISTRY.items():
         if category and fd["category"] != category:
             continue
+        expression = fd.get("expression", "")
+        if fd["type"] == "callback":
+            expression = "Python callback"
         result.append({
             "id": fid,
             "name": fd["name"],
@@ -361,6 +364,7 @@ async def list_factors(category: str | None = Query(None, description="Filter by
             "type": fd["type"],
             "description": fd["description"],
             "lookback_days": fd["lookback_days"],
+            "expression": expression,
         })
     # Sort: alphabetical by category, then id
     result.sort(key=lambda x: (x["category"], x["id"]))
