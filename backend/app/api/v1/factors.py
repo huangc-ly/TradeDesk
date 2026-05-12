@@ -1,17 +1,42 @@
 """Factor library — declarative registry + cross-sectional computation.
 
-Each factor is defined once in FACTOR_REGISTRY.  Adding a factor is a
-single metadata entry — no Python code required for simple SQL factors.
+Three factor types:
+  "raw"      — direct column read, single-date scan
+  "window"   — DuckDB window function over a lookback period
+  "callback" — Python function (DataFrame) → Series, for logic that
+               can't be expressed in a single SQL expression
+
+Simple factors need only a row in FACTOR_REGISTRY.
+Complex factors add a `compute` callable — a function escape hatch.
 """
+
+from __future__ import annotations
 
 from fastapi import APIRouter, Query, HTTPException
 from app.core.database import db
 from app.core.config import settings
 import numpy as np
+import pandas as pd
+from collections.abc import Callable
 
 router = APIRouter()
 
 STOCK_DAILY = str(settings.stock_daily).replace("\\", "/")
+
+
+# ---------------------------------------------------------------------------
+# Callback functions (defined before FACTOR_REGISTRY so they can be
+# referenced by name in factor definitions)
+# ---------------------------------------------------------------------------
+
+def _amplitude_5d(df: pd.DataFrame) -> pd.Series:
+    """5-day average of daily amplitude (high-low)/close, per stock."""
+    df = df.sort_values(["ts_code", "trade_date"])
+    amp = (df["high"] - df["low"]) / df["close"]
+    return amp.groupby(df["ts_code"]).transform(
+        lambda s: s.rolling(5, min_periods=5).mean()
+    )
+
 
 # ---------------------------------------------------------------------------
 # Factor Registry
@@ -146,6 +171,25 @@ FACTOR_REGISTRY: dict[str, dict] = {
         "lookback_days": 100,
         "description": "近60个交易日日收益率标准差",
     },
+    # ── Composite (callback) ────────────────────────────────────────────
+    "log_circ_mv": {
+        "name": "对数流通市值",
+        "category": "size",
+        "type": "callback",
+        "columns": ["circ_mv"],
+        "lookback_days": 5,
+        "compute": lambda df: np.log(df["circ_mv"].replace(0, np.nan)),
+        "description": "流通市值的自然对数（压缩规模差异）",
+    },
+    "amplitude_5d": {
+        "name": "5日均振幅",
+        "category": "volatility",
+        "type": "callback",
+        "columns": ["high", "low", "close"],
+        "lookback_days": 15,
+        "compute": _amplitude_5d,
+        "description": "近5日(最高-最低)/收盘价的均值",
+    },
 }
 
 
@@ -201,6 +245,50 @@ def _build_window_query(factor_def: dict, date_: str) -> str:
       AND value IS NOT NULL
     ORDER BY ts_code
     """
+
+
+def _load_data_for_callback(factor_def: dict, date_: str) -> pd.DataFrame:
+    """Load the columns declared by a callback factor over its lookback window."""
+    lookback = factor_def.get("lookback_days", 0)
+    columns = factor_def.get("columns", ["close"])
+    col_list = ", ".join(c for c in columns if c not in ("ts_code", "trade_date"))
+
+    if lookback > 0:
+        query = f"""
+        SELECT ts_code, trade_date, {col_list}
+        FROM read_parquet('{STOCK_DAILY}')
+        WHERE trade_date BETWEEN '{date_}'::DATE - {lookback} AND '{date_}'
+        ORDER BY ts_code, trade_date
+        """
+    else:
+        query = f"""
+        SELECT ts_code, trade_date, {col_list}
+        FROM read_parquet('{STOCK_DAILY}')
+        WHERE trade_date = '{date_}'
+        ORDER BY ts_code
+        """
+    return db.conn.execute(query).fetchdf()
+
+
+def _build_response(
+    df: pd.DataFrame, factor_id: str, factor_def: dict, date_: str
+) -> dict:
+    """Shared response builder for all factor types."""
+    values = df["value"].to_numpy(dtype=float)
+    stats = _compute_stats(values)
+    return {
+        "factor_id": factor_id,
+        "factor_name": factor_def["name"],
+        "date": date_,
+        "category": factor_def["category"],
+        "stats": stats,
+        "top_10": df.nlargest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
+        "bottom_10": df.nsmallest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
+        "all_values": [
+            {"ts_code": row["ts_code"], "value": round(float(row["value"]), 6)}
+            for _, row in df.iterrows()
+        ],
+    }
 
 
 def _compute_stats(values: np.ndarray) -> dict:
@@ -275,27 +363,27 @@ async def compute_factor_values(
     try:
         if factor_type == "raw":
             df = db.conn.execute(_build_raw_query(fd, date_)).fetchdf()
-        else:
+        elif factor_type == "window":
             df = db.conn.execute(_build_window_query(fd, date_)).fetchdf()
+        elif factor_type == "callback":
+            raw = _load_data_for_callback(fd, date_)
+            compute_fn: Callable = fd["compute"]
+            raw["value"] = compute_fn(raw)
+            # Keep only target date rows with non-null values
+            df = raw[raw["trade_date"].astype(str).str[:10] == date_].copy()
+            df = df[df["value"].notna()]
+            df = df.sort_values("ts_code")
+            if df.empty:
+                raise HTTPException(status_code=404, detail=f"No stocks with valid {factor_id} on {date_}")
+            return _build_response(df, factor_id, fd, date_)
+        else:
+            raise HTTPException(status_code=500, detail=f"Unknown factor type: {factor_type}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
 
     if df.empty:
         raise HTTPException(status_code=404, detail=f"No stocks with valid {factor_id} on {date_}")
 
-    values = df["value"].to_numpy(dtype=float)
-    stats = _compute_stats(values)
-
-    return {
-        "factor_id": factor_id,
-        "factor_name": fd["name"],
-        "date": date_,
-        "category": fd["category"],
-        "stats": stats,
-        "top_10": df.nlargest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
-        "bottom_10": df.nsmallest(10, "value")[["ts_code", "value"]].to_dict(orient="records"),
-        "all_values": [
-            {"ts_code": row["ts_code"], "value": round(float(row["value"]), 6)}
-            for _, row in df.iterrows()
-        ],
-    }
+    return _build_response(df, factor_id, fd, date_)
