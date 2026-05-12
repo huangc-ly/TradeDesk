@@ -39,6 +39,12 @@ const router = createRouter({
           component: () => import('@/views/Analysis.vue'),
           meta: { title: '分析' },
         },
+        {
+          path: 'factors',
+          name: 'Factors',
+          component: () => import('@/views/Factors.vue'),
+          meta: { title: '因子库' },
+        },
       ],
     },
   ],

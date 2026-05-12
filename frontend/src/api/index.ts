@@ -46,4 +46,13 @@ export const analysisApi = {
     http.get('/v1/analysis/returns-distribution', { params }),
 }
 
+// Factors APIs
+export const factorsApi = {
+  listFactors: (category?: string) =>
+    http.get('/v1/factors/factors', { params: category ? { category } : {} }),
+  getLatestDate: () => http.get('/v1/factors/factors/latest-date'),
+  computeValues: (factorId: string, date?: string) =>
+    http.get(`/v1/factors/factors/${factorId}/values`, { params: date ? { date } : {} }),
+}
+
 export default http

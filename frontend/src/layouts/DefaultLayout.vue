@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { Monitor, TrendCharts, Setting, Wallet, DataAnalysis } from '@element-plus/icons-vue'
+import { Monitor, TrendCharts, Setting, Wallet, DataAnalysis, Histogram } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -12,6 +12,7 @@ const menuItems = [
   { path: '/strategy', title: '策略', icon: Setting },
   { path: '/portfolio', title: '组合', icon: Wallet },
   { path: '/analysis', title: '分析', icon: DataAnalysis },
+  { path: '/factors', title: '因子库', icon: Histogram },
 ]
 </script>
 
